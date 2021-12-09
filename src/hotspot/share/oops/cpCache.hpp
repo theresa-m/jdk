@@ -454,13 +454,13 @@ class ConstantPoolCache: public MetaspaceObj {
   // CDS support
   void remove_unshareable_info();
   void verify_just_initialized();
- private:
+ //private:
   void walk_entries_for_initialization(bool check_only);
   void set_length(int length)                    { _length = length; }
 
   static int header_size()                       { return sizeof(ConstantPoolCache) / wordSize; }
   static int size(int length)                    { return align_metadata_size(header_size() + length * in_words(ConstantPoolCacheEntry::size())); }
- public:
+ //public:
   int size() const                               { return size(length()); }
  private:
 

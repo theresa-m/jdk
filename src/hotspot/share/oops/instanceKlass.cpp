@@ -1511,6 +1511,86 @@ void InstanceKlass::call_class_initializer(TRAPS) {
     ls.print("%d Initializing ", call_class_initializer_counter++);
     name()->print_value_on(&ls);
     ls.print_cr("%s (" INTPTR_FORMAT ")", h_method() == NULL ? "(no method)" : "", p2i(this));
+
+    // klass, vtable, itable, oop map, interface implementor
+    int klassSizeWithAlignmentInWords = align_metadata_size(header_size() + _vtable_len + _itable_len + _nonstatic_oop_map_size + (is_interface() ? (int)sizeof(Klass*)/wordSize : 0));
+    ls.print("total klass size with embedded sections (bytes): %d\n", klassSizeWithAlignmentInWords * wordSize);
+    ls.print("- klass header size (bytes): %d\n",  header_size() * wordSize);
+    ls.print("- klass vtable length (bytes): %d\n", _vtable_len * wordSize);
+    ls.print("- klass itable length (bytes): %d\n", _itable_len * wordSize);
+    ls.print("- klass oop map size (bytes): %d\n", _nonstatic_oop_map_size * wordSize);
+    ls.print("- interface implementor (bytes): %d\n", (is_interface() ? (int)sizeof(Klass*) : 0));
+    int klassAlignment = klassSizeWithAlignmentInWords - header_size() - _vtable_len - _itable_len - _nonstatic_oop_map_size - (is_interface() ? (int)sizeof(Klass*) : 0);
+    ls.print("- klass alignment (bytes): %d\n", klassAlignment * wordSize);
+
+    // pointers related to inner classes
+    ls.print("pointer accessed sections\n");
+    ls.print("- inner classes attribute (bytes): %lu\n", inner_classes()->length() * sizeof(u2));
+    ls.print("- nest members attribute (byte): %lu\n", nest_members()->length() * sizeof(u2));
+
+    // constant pool ~(80 + 8*L)
+    ConstantPool* cp = constants();
+    int cpSizeWithAlignmentInWords = cp->size();
+    ls.print("constant pool total size (bytes): %d\n", cpSizeWithAlignmentInWords * wordSize);
+    ls.print("- cp header size (bytes): %d\n", cp->header_size() * wordSize);
+    ls.print("- cp number of elements in array: %d\n", cp->length()); // N * 8: bytes per pointer
+    ls.print("- cp number of elements in array (bytes): %d\n", cp->length() * 8);
+    int cpAlignment = cpSizeWithAlignmentInWords - cp->header_size() - cp->length();
+    ls.print("- cp alignemnt (bytes): %d\n", cpAlignment * wordSize);
+
+    // constant pool tag (1 * L)
+    ls.print("Constant pool tags (bytes): %d\n", cp->length());
+
+    // CPCache ~(16 + 32*L)
+    ConstantPoolCache* cpcache = cp->cache();
+    int cpCacheSizeWithAlignmentInWords = cpcache->size();
+    ls.print("constantpool cache total size (bytes): %d\n", cpCacheSizeWithAlignmentInWords * wordSize);
+    ls.print("- cp cache header size (bytes): %d\n", cpcache->header_size() * wordSize);
+    ls.print("- cp cache number of entries: %d\n", cpcache->length());
+    ls.print("- cp cache size of all entries (bytes): %d\n", cpcache->length() * in_words(ConstantPoolCacheEntry::size()) * wordSize);
+    int cpCacheAlignment = cpCacheSizeWithAlignmentInWords - cpcache->header_size() - cpcache->length() * in_words(ConstantPoolCacheEntry::size());
+    ls.print("- cp cache alignment (bytes): %d\n", cpCacheAlignment * wordSize);
+
+    // local methods
+    int sizeOfAllMethodsBytes = 0;
+    Array<Method*>* myMethodList = methods();
+    ls.print("Local Methods count: %d\n", myMethodList->length());
+    for (int i = 0; i < myMethodList->length(); i++) {
+      int totalMethodSizeBytes = 0;
+      Method* method = myMethodList->at(i);
+      ls.print("Method info for: %s\n", method->name_and_sig_as_C_string());
+
+      // Method ~(88)
+      ls.print("- size is (bytes): %d\n", method->size() * wordSize);
+      totalMethodSizeBytes += method->size() * wordSize;
+
+      // ConstMethod ~(48 + M)
+      ConstMethod* constMethod = method->constMethod();
+      ls.print("- ConstMethod total size (bytes): %d\n", constMethod->size() * wordSize);
+      totalMethodSizeBytes += constMethod->size() * wordSize;
+
+      // MethodData ~(264 + M) - not created until method is used
+      ls.print("- MethodData header size (bytes): %lu\n", sizeof(MethodData));
+      totalMethodSizeBytes += sizeof(MethodData);
+
+      // MethodCounters ~(32)
+      MethodCounters* methodCounters = method->method_counters();
+      if (methodCounters != NULL) {
+        ls.print("- MethodCounters size: %d\n", methodCounters->size() * wordSize);
+        totalMethodSizeBytes += methodCounters->size() * wordSize;
+      } else {
+        ls.print("- MethodCounters header size (bytes): %lu\n", sizeof(MethodCounters));
+        totalMethodSizeBytes += sizeof(MethodCounters);
+      }
+
+      ls.print("- Total method size: %d\n", totalMethodSizeBytes);
+      sizeOfAllMethodsBytes += totalMethodSizeBytes;
+    }
+    ls.print("Total size of all methods: %d\n", sizeOfAllMethodsBytes);
+
+    ls.print("approximate total class size for %s: %lu\n", external_name(), (klassSizeWithAlignmentInWords * wordSize) + (inner_classes()->length() * sizeof(u2)) 
+    + (nest_members()->length() * sizeof(u2)) + (cpSizeWithAlignmentInWords * wordSize) + cp->length() + 
+      (cpcache->size() * wordSize) + sizeOfAllMethodsBytes);
   }
   if (h_method() != NULL) {
     JavaCallArguments args; // No arguments
@@ -3724,9 +3804,9 @@ void InstanceKlass::print_class_load_logging(ClassLoaderData* loader_data,
     // Classfile checksum
     if (cfs) {
       debug_stream.print(" bytes: %d checksum: %08x",
-                         cfs->length(),
-                         ClassLoader::crc32(0, (const char*)cfs->buffer(),
-                         cfs->length()));
+                         cfs->length(), // number of klass bytes
+                         ClassLoader::crc32(0, (const char*)cfs->buffer(), cfs->length())
+                         );
     }
 
     msg.debug("%s", debug_stream.as_string());
